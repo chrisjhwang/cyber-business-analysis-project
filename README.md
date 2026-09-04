@@ -5,8 +5,9 @@ translates it into **expected annual financial loss** using [FAIR](https://www.f
 (Factor Analysis of Information Risk) methodology — served through a real backend/API/CI-CD stack
 rather than a one-off script.
 
-> **Status: Stage 1 of 7 (MVP).** The environment scaffold is up. There is no application logic yet
-> — see [Build stages](#build-stages) for what lands when, and [PLAN.md](PLAN.md) for the full plan.
+> **Status: not started.** This is also a from-scratch learning project — see
+> [PLAN.md](PLAN.md) for the full build plan, including a concept primer for every technology used and
+> a "Concepts you need first" list for each stage. Nothing below reflects code that exists yet.
 
 ## Architecture (target)
 
@@ -24,53 +25,13 @@ Data flows one way: ingestion writes raw vulnerability facts, the scoring engine
 curated asset list and writes derived `risk_scores`, and the API is a read layer over both (plus a
 `POST /rescore` trigger).
 
-## Setup
-
-Requires Docker and Python 3.12.
-
-```bash
-git clone <this repo> && cd cyber-business-analysis-project
-
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-cp .env.example .env          # defaults work as-is for local dev
-docker compose up -d          # starts Postgres 16 on localhost:5432
-```
-
-Verify the database is up:
-
-```bash
-docker compose ps             # db should report (healthy)
-docker compose exec db psql -U postgres -d cyber_risk -c '\dt'
-```
-
-An empty database is the expected Stage 1 result — tables arrive in Stage 2.
-
-Tear down (`-v` also drops the data volume for a clean slate):
-
-```bash
-docker compose down -v
-```
-
-## Configuration
-
-Copy `.env.example` to `.env`. `.env` is gitignored and never committed.
-
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Connection string used by the app and Alembic from the host. Must match the Postgres credentials below. |
-| `NVD_API_KEY` | Optional. Raises the NVD rate limit from 5 to 50 requests / 30s. Ingestion works without it, just slower. [Request one here.](https://nvd.nist.gov/developers/request-an-api-key) |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` / `POSTGRES_PORT` | Consumed by `docker-compose.yml` to provision the local Postgres container. |
-
 ## Build stages
 
 Each stage covers one layer of the stack or one integration point between two, and isn't complete
-until its writeup is. Writeups are lab-notebook style — decisions, concepts, and what broke — read
-in build order:
+until its writeup is. See [PLAN.md](PLAN.md) for what each stage builds, the concepts it requires, and
+why. Writeups land in `docs/writeups/` as each stage finishes and will be linked here in build order.
 
-1. [Repo & environment scaffold](docs/writeups/01-repo-and-environment.md) ✅
+1. Repo & environment scaffold
 2. Data layer — SQLAlchemy models, Alembic migrations, asset seed
 3. Ingestion pipeline — CISA KEV + NVD, idempotent and re-runnable
 4. Risk scoring engine — FAIR-lite LEF / LM / ALE
@@ -79,7 +40,9 @@ in build order:
 7. Containerization + CI/CD — **MVP checkpoint**
 
 Stretch stages (Monte Carlo ALE, scheduled worker, AWS, Terraform, dashboard) are deliberately gated
-behind the Stage 7 checkpoint. See [PLAN.md](PLAN.md) §7.
+behind the Stage 7 checkpoint. See [PLAN.md](PLAN.md) §8.
+
+Setup instructions land here once Stage 1 exists — see [PLAN.md](PLAN.md) for what that stage builds.
 
 ## Methodology
 
