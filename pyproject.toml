@@ -1,0 +1,17 @@
+# Tool configuration only -- dependencies stay in requirements*.txt (see PLAN.md §2).
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+# E/F: pyflakes + pycodestyle errors. I: import order. B: likely bugs. UP: modern syntax.
+select = ["E", "F", "I", "B", "UP"]
+# Long lines are a formatting preference, not a bug; data literals in the seed
+# scripts would otherwise need awkward wrapping.
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

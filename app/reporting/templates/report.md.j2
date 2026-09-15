@@ -1,0 +1,109 @@
+{% set c = r.coverage %}
+{% set p = r.portfolio %}
+# Cyber Risk Quantification Report
+
+Generated {{ r.generated_at|datefmt }} · KEV data through {{ c.latest_kev_added|datefmt }} · NVD data through {{ c.latest_nvd_modified|datefmt }} · Scored {{ c.last_scored|datefmt }}
+
+> **Read this first.** Figures are *inherent* risk: they assume every applicable vulnerability is
+> still unpatched and unmitigated. Dollar values come from a FAIR-lite point-estimate model whose
+> constants are documented in `docs/assumptions.md`. Treat them as order-of-magnitude estimates for
+> ranking and prioritization, not as forecasts.
+
+## 1. Executive summary
+
+{% if p.riskiest %}
+- **Modeled annualized loss exposure: {{ p.total_ale|money }}/yr** across {{ p.assets_exposed }} of {{ p.asset_count }} assets, from {{ c.scenarios }} vulnerability-to-asset scenarios involving {{ c.applicable_cves }} distinct CVEs.
+- **Riskiest asset: {{ p.riskiest.asset.name }}**, {{ p.riskiest.total_ale|money }}/yr ({{ (p.riskiest.total_ale / p.total_ale)|pct if p.total_ale else "–" }} of the total), with {{ p.riskiest.kev_count }} actively exploited (KEV) CVEs applicable.
+- **Patching all {{ r.remediations|length }} CVEs in §3 would cut modeled exposure by {{ p.top_remediation_reduction|money }}/yr ({{ p.top_remediation_share|pct }}).** A small figure here does not mean they are unimportant. It means the affected assets have many *other* exploitable CVEs, so they need systemic fixes (upgrade, isolate, replace), not individual patches.
+- Of {{ c.kev }} CVEs in the CISA KEV catalog, {{ c.kev_ransomware }} are linked to ransomware campaigns. {{ c.kev_without_cvss }} KEV entries have no CVSS vector in NVD yet and could not be scored.
+{% else %}
+- No vulnerability-to-asset scenarios are scored yet. Run `python -m app.cli pipeline`.
+{% endif %}
+
+## 2. Risk register by asset
+
+| Asset | Type | Tier | Applicable CVEs | KEV | P(attack succeeds) | Loss events / yr | Loss per event | **ALE / yr** | P(≥1 loss / yr) |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|
+{% for a in r.assets %}
+| {{ a.asset.name|md }} | {{ a.asset.type }} | {{ a.asset.sensitivity_tier }} | {{ a.scenario_count }} | {{ a.kev_count }} | {{ a.aggregate.p_any|pct }} | {{ a.expected_loss_events|num(3) }} | {{ a.aggregate.lm|money }} | **{{ a.total_ale|money }}** | {{ a.prob_loss_event|pct }} |
+{% endfor %}
+
+How to read this: an attacker needs only **one** working vulnerability. *P(attack succeeds)* is the
+chance that at least one applicable CVE works: 1 − Π(1 − pᵢ). *Loss events / yr* = threat event
+frequency for the asset × that probability. *Loss per event* is the average loss magnitude, weighted
+toward the easiest-to-exploit CVEs. *P(≥1 loss / yr)* = 1 − e^(−loss events), treating events as a
+Poisson process.
+
+For comparison, simply summing every scenario's ALE would give {{ p.scenario_ale_sum|money }}/yr. That
+treats each CVE as a separate, independent breach, which badly overstates assets with long vulnerability lists.
+
+## 3. Remediation priorities: what to patch first
+
+Ranked by **standalone exposure**: the sum of the CVE's scenario ALEs across every asset it affects,
+i.e. how dangerous the hole is on its own. *Reduction if patched alone* is what asset-level ALE would
+actually drop if only this CVE were fixed.
+
+| # | CVE | Vulnerability | CVSS | KEV | Ransomware | Assets affected | Standalone ALE / yr | Reduction if patched alone | CISA due date | Required action |
+|---:|---|---|---:|:---:|:---:|---|---:|---:|---|---|
+{% for item in r.remediations %}
+{% set v = item.vulnerability %}
+| {{ loop.index }} | {{ v.cve_id }} | {{ v.vulnerability_name|md }} | {{ v.cvss_score|num(1) }} | {{ "✔" if v.kev_flag else "" }} | {{ "✔" if v.known_ransomware_use else "" }} | {{ item.assets|join(", ")|md }} | **{{ item.standalone_ale|money }}** | {{ item.reduction|money }} | {{ v.kev_due_date|datefmt }} | {{ v.required_action|md }} |
+{% endfor %}
+
+## 4. Top {{ r.top_scenarios|length }} risk scenarios
+
+Each row is one CVE on one asset, scored as if it were the only vulnerability present, with its full FAIR decomposition: ALE = LEF × LM, where LEF = TEF × P(exploit) and LM = primary + secondary loss.
+
+| CVE | Asset | Matched on | CVSS | KEV | TEF | P(exploit) | LEF | Primary loss | Secondary loss | LM | ALE / yr |
+|---|---|---|---:|:---:|---:|---:|---:|---:|---:|---:|---:|
+{% for s, v, a in r.top_scenarios %}
+| {{ v.cve_id }} | {{ a.name|md }} | `{{ s.matched_technology }}` | {{ v.cvss_score|num(1) }} | {{ "✔" if v.kev_flag else "" }} | {{ s.tef|num }} | {{ s.exploit_probability|pct }} | {{ s.lef|num(3) }} | {{ s.primary_loss|money }} | {{ s.secondary_loss|money }} | {{ s.lm|money }} | **{{ s.ale|money }}** |
+{% endfor %}
+
+## 5. Asset detail
+
+{% for d in r.asset_details %}
+{% set a = d.summary.asset %}
+### {{ a.name }} ({{ d.summary.total_ale|money }}/yr, {{ d.summary.scenario_count }} applicable CVEs)
+
+{{ a.description or "" }} Type `{{ a.type }}`, sensitivity tier {{ a.sensitivity_tier }}. Declared stack: {% for t in a.technologies %}`{{ t }}`{{ ", " if not loop.last }}{% endfor %}.
+
+| CVE | Vulnerability | CVSS | KEV | Standalone ALE / yr |
+|---|---|---:|:---:|---:|
+{% for s, v, _ in d.scenarios %}
+| {{ v.cve_id }} | {{ v.vulnerability_name|md }} | {{ v.cvss_score|num(1) }} | {{ "✔" if v.kev_flag else "" }} | {{ s.ale|money }} |
+{% endfor %}
+
+{% endfor %}
+## 6. How CVSS severity translates to dollars
+
+| CVSS severity | In KEV? | Scenarios | Average standalone ALE | Sum of standalone ALE |
+|---|:---:|---:|---:|---:|
+{% for row in r.severity %}
+| {{ row.severity }} | {{ "yes" if row.kev_flag else "no" }} | {{ row.scenarios }} | {{ row.avg_ale|money }} | {{ row.total_ale|money }} |
+{% endfor %}
+
+CVSS measures *theoretical* severity. KEV membership is evidence of *actual* exploitation, and in this
+model it multiplies exploit probability by {{ r.assumptions.kev_multiplier|num(0) }}×. That is why a HIGH CVE that is actively
+exploited can outrank a CRITICAL one that is not.
+
+## 7. Weakness classes (CWE) carrying the most exposure
+
+| CWE | CVEs | Sum of standalone ALE / yr |
+|---|---:|---:|
+{% for row in r.cwes %}
+| {{ row.cwe }} | {{ row.cve_count }} | {{ row.total_ale|money }} |
+{% endfor %}
+
+A CVE with several CWEs counts toward each, so this table overlaps and does not sum to the total.
+
+## 8. Methodology, assumptions and limitations
+
+- **Model:** FAIR-lite point estimate. ALE = LEF × LM, first per (CVE, asset) scenario, then per asset ("one open door": LEF = TEF × P(any applicable CVE works)).
+  - LEF = TEF (by asset type: {% for k, val in r.assumptions.tef.items() %}{{ k }} {{ val }}{{ ", " if not loop.last }}{% endfor %}; ×{{ r.assumptions.ransomware_multiplier }} for ransomware-linked CVEs) × P(exploit).
+  - P(exploit) = normalized CVSS exploitability × {{ r.assumptions.non_kev_scale }}, ×{{ r.assumptions.kev_multiplier|num(0) }} if the CVE is in KEV.
+  - LM = primary loss (CVSS C/I/A impact band × {{ r.assumptions.primary_share|pct(0) }} of {{ r.assumptions.benchmark|money }}) + secondary loss ({{ r.assumptions.secondary_share|pct(0) }} of {{ r.assumptions.benchmark|money }} × tier/3 × confidentiality factor).
+- **Benchmark:** {{ r.assumptions.benchmark|money }}, the global average breach cost from IBM/Ponemon's *Cost of a Data Breach Report 2024*. Verify against the current edition before citing.
+- **Applicability:** a CVE is scored against an asset only if NVD CPE data (or the KEV vendor/product) matches a technology the asset declares. An incomplete asset stack means **under**-counting.
+- **Not modeled:** patch or mitigation status, compensating controls, the asset's real exposure beyond its type, and dependence between assets (one breach spreading to another). Point estimates carry no uncertainty range; Monte Carlo simulation is the planned next step (PLAN.md Stage 8).
+- **Data coverage:** {{ c.vulnerabilities }} CVEs in the database, {{ c.with_cvss }} with CVSS vectors, {{ c.kev }} in KEV.
